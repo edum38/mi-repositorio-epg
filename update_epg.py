@@ -1,70 +1,79 @@
 import requests
 import gzip
+import io
 
-# Estas son las URLs de la API oficial de IPTV-org (Son las más estables)
-EPG_SOURCES = [
-    "https://iptv-org.github.io/epg/guides/es/movistarplus.es.xml", # España
-    "https://iptv-org.github.io/epg/guides/it/sky.it.xml",           # Italia
-    "https://iptv-org.github.io/epg/guides/mx/mi.tv.xml",           # México
-    "https://iptv-org.github.io/epg/guides/ar/mi.tv.xml",           # Argentina
-    "https://iptv-org.github.io/epg/guides/co/mi.tv.xml",           # Colombia
-    "https://iptv-org.github.io/epg/guides/pe/mi.tv.xml",           # Perú
-    "https://iptv-org.github.io/epg/guides/fr/programme-tv.net.xml", # Francia
-    "https://iptv-org.github.io/epg/guides/de/tvtoday.de.xml",       # Alemania
-    "https://iptv-org.github.io/epg/guides/uk/sky.com.xml",         # UK
-    "https://iptv-org.github.io/epg/guides/br/meuguia.tv.xml"       # Brasil
-]
+# Solo UNA fuente que tiene TODO el mundo (más de 100MB)
+FUENTE_GLOBAL = "https://iptv-org.github.io/epg/guides/world.xml.gz"
+
+# Los países que queremos mantener (códigos de país)
+PAISES_INTERES = ['es', 'it', 'mx', 'ar', 'co', 'pe', 'fr', 'de', 'uk', 'br']
 
 def main():
-    print("Iniciando descarga desde la API oficial...")
+    print("Iniciando descarga del archivo MUNDIAL (esto puede tardar)...")
     
-    # Creamos el archivo final manualmente para evitar errores de parseo
-    # Empezamos con el encabezado XMLTV
-    full_xml = '<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="MiAppIPTV">\n'
-    
-    headers = {'User-Agent': 'Mozilla/5.0'}
-
-    for url in EPG_SOURCES:
-        try:
-            print(f"Descargando: {url}")
-            # Usamos stream=True para manejar mejor archivos grandes
-            response = requests.get(url, headers=headers, timeout=60)
-            
-            if response.status_code == 200:
-                content = response.text
-                
-                # Extraemos lo que hay entre <tv> y </tv>
-                # Esto es más rápido y evita problemas con la raíz del XML
-                try:
-                    start = content.find('<tv')
-                    # Buscamos dónde termina la etiqueta de apertura del primer <tv...>
-                    start = content.find('>', start) + 1
-                    end = content.rfind('</tv>')
-                    
-                    if start > 0 and end > 0:
-                        inner_content = content[start:end]
-                        full_xml += inner_content
-                        print(f"  --> OK: Datos añadidos correctamente.")
-                    else:
-                        print("  --> Error: Estructura XML no reconocida.")
-                except:
-                    print("  --> Error procesando el texto del XML.")
-            else:
-                print(f"  --> Error HTTP: {response.status_code}")
-        except Exception as e:
-            print(f"  --> Fallo en {url}: {e}")
-
-    full_xml += '\n</tv>'
-
-    # Guardar los resultados
-    print("Guardando archivos...")
-    with open("guia_completa.xml", "w", encoding="utf-8") as f:
-        f.write(full_xml)
+    try:
+        # 1. Descargar el archivo gigante
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(FUENTE_GLOBAL, headers=headers, timeout=120)
         
-    with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
-        f.write(full_xml)
-    
-    print(f"¡PROCESO COMPLETADO! Tamaño del archivo: {len(full_xml)} bytes.")
+        if r.status_code == 200:
+            print("Descarga completa. Descomprimiendo y filtrando...")
+            
+            # 2. Descomprimir en memoria
+            with gzip.GzipFile(fileobj=io.BytesIO(r.content)) as f:
+                content = f.read().decode('utf-8', errors='ignore')
+
+            # 3. Preparar el nuevo archivo
+            # Buscamos la cabecera original
+            header_end = content.find('>') + 1
+            tv_start = content.find('<tv', header_end)
+            tv_end = content.find('>', tv_start) + 1
+            
+            final_xml = [content[:tv_end]] # Guardamos la cabecera y el tag <tv...>
+
+            # 4. Filtrar por país (buscamos canales que terminen en .es, .mx, etc)
+            print("Filtrando canales por país...")
+            import re
+            
+            # Este regex busca canales y programas que coincidan con tus países
+            paises_pattern = "|".join([rf"\.{p}\"" for p in PAISES_INTERES])
+            
+            # Extraer bloques
+            channels = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
+            programmes = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
+
+            canales_guardados = []
+            ids_guardados = set()
+
+            for c in channels:
+                if any(ext in c for ext in [f'.{p}"' for p in PAISES_INTERES]):
+                    final_xml.append(c)
+                    # Guardamos el ID para filtrar los programas luego
+                    match = re.search(r'id="(.*?)"', c)
+                    if match: ids_guardados.add(match.group(1))
+
+            print(f"  --> {len(ids_guardados)} canales encontrados.")
+
+            for p in programmes:
+                match = re.search(r'channel="(.*?)"', p)
+                if match and match.group(1) in ids_guardados:
+                    final_xml.append(p)
+
+            final_xml.append('</tv>')
+            resultado = "\n".join(final_xml)
+
+            # 5. Guardar
+            with open("guia_completa.xml", "w", encoding="utf-8") as f:
+                f.write(resultado)
+            with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
+                f.write(resultado)
+                
+            print(f"¡LOGRADO! Archivo final generado con éxito.")
+        else:
+            print(f"Error al bajar el archivo mundial: {r.status_code}")
+
+    except Exception as e:
+        print(f"Error crítico: {e}")
 
 if __name__ == "__main__":
     main()
