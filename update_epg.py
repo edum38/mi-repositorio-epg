@@ -2,41 +2,47 @@ import requests
 import gzip
 import re
 
-# FUENTES ALTERNATIVAS (Más estables para Scripts)
+# FUENTES SELECCIONADAS PARA TUS PAÍSES
 EPG_SOURCES = [
-    "https://osdn.net/projects/xmltv/storage/xmltv.xml.gz", # Fuente Global (Backup)
-    "https://raw.githubusercontent.com/sonidariel/EPG-LATAM/master/guide.xml", # Latam (Arg, Mex, Col, Pe)
-    "https://raw.githubusercontent.com/davidmuma/EPG_dobleM/master/guia.xml", # España
-    "https://www.teleguide.info/download/new3/xmltv.xml.gz", # Europa (Fr, De, It, Uk)
+    # España
+    "https://raw.githubusercontent.com/davidmuma/EPG_dobleM/master/guia.xml",
+    # Latinoamérica (México, Argentina, Colombia, Perú)
+    "https://raw.githubusercontent.com/sonidariel/EPG-LATAM/master/guide.xml",
+    # Italia, Francia, Alemania, UK (Fuente Europea estable)
+    "https://raw.githubusercontent.com/freetown/epg/master/vvg_guide.xml",
+    # Brasil
+    "https://raw.githubusercontent.com/LITUATUI/LITUATUI.github.io/master/epg/guia.xml"
 ]
 
 def main():
-    print("Iniciando descarga de fuentes alternativas...")
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV">']
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    print("Iniciando descarga de EPG por países...")
+    # Cabecera XMLTV
+    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-Multinacional">']
+    
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
     for url in EPG_SOURCES:
         try:
             print(f"Descargando: {url}")
-            r = requests.get(url, headers=headers, timeout=45)
+            r = requests.get(url, headers=headers, timeout=50)
             
             if r.status_code == 200:
-                # Si la URL termina en .gz, hay que descomprimirla primero
-                if url.endswith(".gz"):
+                # Detectar si es GZ o XML plano
+                if url.endswith(".gz") or r.content[:2] == b'\x1f\x8b':
                     content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
                 else:
                     content = r.content.decode('utf-8', errors='ignore')
                 
-                # Buscamos bloques de canales y programas
+                # Extraer canales y programas
                 channels = re.findall(r'<channel.*?</channel>', content, re.DOTALL | re.IGNORECASE)
                 programmes = re.findall(r'<programme.*?</programme>', content, re.DOTALL | re.IGNORECASE)
                 
-                if channels or programmes:
+                if channels:
                     final_xml.extend(channels)
                     final_xml.extend(programmes)
-                    print(f"  --> ÉXITO: {len(channels)} canales y {len(programmes)} programas.")
+                    print(f"  --> OK: {len(channels)} canales añadidos.")
                 else:
-                    print("  --> No se encontraron datos en el texto descargado.")
+                    print("  --> No se encontraron canales en esta URL.")
             else:
                 print(f"  --> Error HTTP: {r.status_code}")
         except Exception as e:
@@ -45,13 +51,13 @@ def main():
     final_xml.append('</tv>')
     full_text = "\n".join(final_xml)
 
-    # Guardar archivos en el repo
+    # Guardar archivos
     with open("guia_completa.xml", "w", encoding="utf-8") as f:
         f.write(full_text)
     with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
         f.write(full_text)
     
-    print(f"\nPROCESO FINALIZADO. Archivo generado con {len(full_text)} caracteres.")
+    print(f"\n¡LISTO! EPG generada correctamente.")
 
 if __name__ == "__main__":
     main()
