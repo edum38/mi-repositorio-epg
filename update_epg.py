@@ -3,14 +3,13 @@ import gzip
 import re
 from datetime import datetime, timedelta
 
-# La fuente que sabemos que GitHub NO bloquea
+# La única fuente que GitHub no bloquea
 URL_OPEN = "http://www.teleguide.info/download/new3/xmltv.xml.gz"
 
-# Ajuste manual para España (Invierno: -2, Verano: -1)
-# Como estamos en marzo, usamos -2
+# Ajuste para España (Ahora mismo -2)
 DESFASE = -2
 
-# Diccionario de traducción (IDs que vienen en el XML ruso)
+# Diccionario de traducción
 TRADUCCIONES = {
     "Discovery": "Discovery Channel",
     "Disney": "Disney Channel",
@@ -22,25 +21,12 @@ TRADUCCIONES = {
     "National Geographic": "Nat Geo",
     "Nickelodeon": "Nickelodeon",
     "History": "Historia",
-    "FOX": "FOX",
-    "AXN": "AXN"
+    "FOX": "FOX España",
+    "AXN": "AXN España"
 }
 
-def ajustar_hora(xml_linea, horas):
-    # Esta función busca la hora y le resta las horas de desfase
-    def cambiar(match):
-        prefix = match.group(1) # start=" o stop="
-        fecha = match.group(2) # 20240520103000
-        try:
-            dt = datetime.strptime(fecha, "%Y%m%d%H%M%S")
-            dt = dt + timedelta(hours=horas)
-            return f'{prefix}="{dt.strftime("%Y%m%d%H%M%S")} +0100"'
-        except:
-            return match.group(0)
-    return re.sub(r'(start|stop)="(\d{14})\s\+\d{4}"', cambiar, xml_linea)
-
 def main():
-    print(f"Conectando a fuente rusa... Ajuste España: {DESFASE}h")
+    print(f"Descargando de fuente rusa... Ajuste: {DESFASE}h")
     final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiGuia-Espana">']
     
     try:
@@ -48,38 +34,47 @@ def main():
         if r.status_code == 200:
             content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
             
-            # Cortamos el archivo en trozos de canales y programas
+            # 1. Extraer Canales
+            ids_validados = []
             canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
-            programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
-            
-            ids_validados = set()
-
-            # 1. Filtramos y traducimos canales
             for c in canales:
                 match_id = re.search(r'id="(.*?)"', c)
                 if match_id:
                     cid = match_id.group(1)
-                    # Buscamos si el ID ruso contiene alguna de nuestras palabras clave
-                    for clave, nombre_limpio in TRADUCCIONES.items():
+                    for clave, nombre in TRADUCCIONES.items():
                         if clave.lower() in cid.lower():
-                            # Cambiamos el nombre cirílico por el nuestro
-                            c = re.sub(r'<display-name.*?>.*?</display-name>', f'<display-name>{nombre_limpio}</display-name>', c)
+                            # Limpieza de nombre
+                            c = re.sub(r'<display-name.*?>.*?</display-name>', f'<display-name>{nombre}</display-name>', c)
                             final_xml.append(c)
-                            ids_validados.add(cid)
+                            ids_validados.append(cid)
                             break
 
-            # 2. Filtramos programas y ajustamos su hora
+            # 2. Extraer Programas y ajustar hora (Método Simple)
+            programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
             for p in programas:
+                # Verificar si el canal nos interesa
                 match_chan = re.search(r'channel="(.*?)"', p)
                 if match_chan and match_chan.group(1) in ids_validados:
-                    # Aplicamos la resta de horas
-                    p_nueva_hora = ajustar_hora(p, DESFASE)
-                    final_xml.append(p_nueva_hora)
+                    
+                    # AJUSTE HORARIO SIMPLIFICADO
+                    # Buscamos las fechas (ej: 20240310120000)
+                    times = re.findall(r'(\d{14})', p)
+                    for t in times:
+                        try:
+                            dt = datetime.strptime(t, "%Y%m%d%H%M%S")
+                            dt_corr = dt + timedelta(hours=DESFASE)
+                            p = p.replace(t, dt_corr.strftime("%Y%m%d%H%M%S"))
+                        except:
+                            continue
+                    
+                    # Forzamos la etiqueta de zona horaria a España (+0100)
+                    p = re.sub(r'\+\d{4}', '+0100', p)
+                    final_xml.append(p)
 
-            print(f"¡ÉXITO! Se han procesado {len(ids_validados)} canales para España.")
+            print(f"¡ÉXITO! Canales procesados: {len(ids_validados)}")
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error en el proceso: {e}")
 
     final_xml.append('</tv>')
     resultado = "\n".join(final_xml)
@@ -91,6 +86,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
