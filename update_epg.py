@@ -2,51 +2,62 @@ import requests
 import gzip
 import re
 
-# FUENTES REGIONALES (Fuera de los bloqueos estándar)
+# FUENTES DE OPEN EPG Y RESPALDO (Servidores de alta disponibilidad)
 EPG_SOURCES = [
-    # LATAM MIX (México, Argentina, Colombia, etc.)
-    "https://iptv-org.github.io/epg/guides/mx/mi.tv.xml",
-    "https://iptv-org.github.io/epg/guides/ar/mi.tv.xml",
-    # EUROPA MIX (Italia, Francia, Alemania)
-    "https://iptv-org.github.io/epg/guides/it/sky.it.xml",
-    "https://iptv-org.github.io/epg/guides/fr/programme-tv.net.xml"
+    # LATAM (México, Argentina, Colombia - Open EPG Mirror)
+    "https://openepg.org/xmltv/latin.xml.gz",
+    # ESPAÑA / EUROPA (Open EPG Mirror)
+    "https://openepg.org/xmltv/spain.xml.gz",
+    "https://openepg.org/xmltv/italy.xml.gz",
+    # Fuente de respaldo de GatoTV (Servidor externo)
+    "http://www.xmltv.co/xmltv/guides/mexico.xml.gz"
 ]
 
 def main():
-    print("Iniciando descarga de fuentes regionales...")
-    # Encabezado XMLTV
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-Regional">']
+    print("Iniciando descarga desde Open EPG...")
+    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-OpenEPG">']
     
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    # Cabeceras para que parezca una descarga de navegador real
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
 
     for url in EPG_SOURCES:
         try:
-            print(f"Descargando: {url}")
-            # Usamos un timeout largo por si el servidor está saturado
-            r = requests.get(url, headers=headers, timeout=45)
+            print(f"Conectando a: {url}")
+            # Quitamos la verificación de SSL por si los certificados de Open EPG fallan
+            r = requests.get(url, headers=headers, timeout=60, verify=False)
             
             if r.status_code == 200:
-                content = r.text
+                print(f"  --> Descargado ({len(r.content)} bytes). Procesando...")
                 
-                # Extraemos canales y programas usando una técnica de recorte limpia
-                # Buscamos todo lo que esté entre el primer <channel y el último </programme>
+                # Descomprimir (Open EPG siempre manda .gz)
                 try:
-                    start_idx = content.find('<channel')
-                    end_idx = content.rfind('</programme>') + 12
-                    
-                    if start_idx != -1 and end_idx != -1:
-                        data = content[start_idx:end_idx]
-                        final_xml.append(data)
-                        print(f"  --> ÉXITO: Datos de {url.split('/')[-2].upper()} añadidos.")
-                    else:
-                        print("  --> No se encontró estructura XMLTV válida.")
+                    content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
                 except:
-                    print("  --> Error procesando el texto.")
-            else:
-                print(f"  --> Error HTTP {r.status_code}")
+                    content = r.text
+
+                # Extraer canales y programas
+                canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
+                programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
                 
+                if canales:
+                    final_xml.extend(canales)
+                    final_xml.extend(programas)
+                    print(f"  --> OK: {len(canales)} canales añadidos.")
+                else:
+                    # Si el regex falla, intentamos capturar todo lo que esté dentro de <tv>
+                    tv_content = re.search(r'<tv.*?>(.*?)</tv>', content, re.DOTALL | re.IGNORECASE)
+                    if tv_content:
+                        final_xml.append(tv_content.group(1))
+                        print("  --> OK: Contenido masivo añadido.")
+                    else:
+                        print("  --> Error: El archivo bajó pero no tiene formato XMLTV.")
+            else:
+                print(f"  --> Error HTTP: {r.status_code}")
         except Exception as e:
-            print(f"  --> Error de conexión: {e}")
+            print(f"  --> Fallo en la conexión: {e}")
 
     final_xml.append('</tv>')
     full_text = "\n".join(final_xml)
@@ -57,7 +68,7 @@ def main():
     with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
         f.write(full_text)
     
-    print(f"\nProceso terminado. Archivo listo para tu aplicación.")
+    print(f"\nProceso terminado. Caracteres totales guardados: {len(full_text)}")
 
 if __name__ == "__main__":
     main()
