@@ -2,60 +2,61 @@ import requests
 import gzip
 import re
 
-# Usamos un servicio de Proxy (AllOrigins o jsDelivr) para que el servidor 
-# original no sepa que es GitHub quien descarga.
+# FUENTES DE ALTA DISPONIBILIDAD (No bloquean a GitHub Actions)
 EPG_SOURCES = [
-    # LATAM (Argentina, México, Chile, Colombia...) - Fuente muy estable
-    "https://api.allorigins.win/raw?url=https://www.teleguide.info/download/new3/xmltv.xml.gz",
-    # EUROPA (Italia, Francia, Alemania)
-    "https://api.allorigins.win/raw?url=https://iptv-org.github.io/epg/guides/it/sky.it.xml"
+    # GatoTV (Latam: México, Argentina, Colombia...)
+    "https://raw.githubusercontent.com/HelmerLuzo/GatoTV/main/epg.xml.gz",
+    # Europa Mirror (Italia, Francia, Alemania) - Servidor de respaldo
+    "http://www.xmltv.co/xmltv/guides/italy.xml.gz",
+    "http://www.xmltv.co/xmltv/guides/france.xml.gz"
 ]
 
 def main():
-    print("Iniciando descarga automatizada vía Proxy...")
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-Global">']
+    print("Iniciando fusión GatoTV + Europa...")
+    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-GatoTV">']
     
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
     for url in EPG_SOURCES:
         try:
-            print(f"Solicitando a través del Proxy: {url}")
-            # El Proxy AllOrigins se encarga de saltarse el bloqueo de IP
+            print(f"Descargando: {url}")
             r = requests.get(url, headers=headers, timeout=60)
             
             if r.status_code == 200:
-                # Si viene comprimido, lo abrimos
-                if r.content[:2] == b'\x1f\x8b':
+                # Descomprimir si es necesario
+                if url.endswith(".gz") or r.content[:2] == b'\x1f\x8b':
+                    print("  --> Descomprimiendo archivo GZ...")
                     content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
                 else:
                     content = r.text
 
-                # Filtramos: Solo queremos canales que NO sean rusos (IDs con .mx, .ar, .co, .it, .es)
-                bloques = re.findall(r'<(channel|programme).*?</\1>', content, re.DOTALL)
-                
-                encontrados = 0
-                for b in bloques:
-                    cuerpo = b[1] # Contenido del bloque
-                    # Filtro de países latinos y europeos
-                    if any(p in cuerpo for p in ['.mx"', '.ar"', '.co"', '.it"', '.es"', '.cl"', '.pe"']):
-                        final_xml.append(f"<{b[0]}{cuerpo}</{b[0]}>")
-                        encontrados += 1
-                
-                print(f"  --> ÉXITO: {encontrados} canales y programas añadidos.")
+                # Extraer bloques (canales y programas)
+                # Buscamos todo lo que esté dentro de las etiquetas <tv>
+                match = re.search(r'<tv.*?>(.*?)</tv>', content, re.DOTALL | re.IGNORECASE)
+                if match:
+                    inner_data = match.group(1)
+                    final_xml.append(inner_data)
+                    # Contamos canales para el log
+                    canales = len(re.findall(r'<channel', inner_data))
+                    print(f"  --> ÉXITO: {canales} canales añadidos de esta fuente.")
+                else:
+                    print("  --> Error: No se encontró estructura <tv>.")
             else:
-                print(f"  --> El Proxy devolvió error: {r.status_code}")
+                print(f"  --> Error HTTP {r.status_code}")
         except Exception as e:
-            print(f"  --> Fallo en la conexión: {e}")
+            print(f"  --> Error crítico: {e}")
 
     final_xml.append('</tv>')
     full_text = "\n".join(final_xml)
 
+    # Guardar localmente (el archivo YAML se encargará del resto)
     with open("guia_completa.xml", "w", encoding="utf-8") as f:
         f.write(full_text)
+    
     with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
         f.write(full_text)
     
-    print("\nPROCESO AUTOMATIZADO COMPLETADO.")
+    print(f"\n¡LISTO! Archivo generado con {len(full_text)} caracteres.")
 
 if __name__ == "__main__":
     main()
