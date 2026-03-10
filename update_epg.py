@@ -1,91 +1,86 @@
 import requests
 import gzip
 import re
+import os
 from datetime import datetime, timedelta
 
-URL_OPEN = "http://www.teleguide.info/download/new3/xmltv.xml.gz"
-
-# Ajuste para España (Moscú UTC+3 -> España UTC+1 = -2 horas)
-DESFASE = -2
-
-TRADUCCIONES = {
-    "Discovery": "Discovery Channel",
-    "Disney": "Disney Channel",
-    "Animal Planet": "Animal Planet",
-    "HBO": "HBO",
-    "MTV": "MTV España",
-    "CNN": "CNN International",
-    "Eurosport": "Eurosport",
-    "National Geographic": "Nat Geo",
-    "Nickelodeon": "Nickelodeon",
-    "History": "Historia",
-    "FOX": "FOX España",
-    "AXN": "AXN España"
-}
-
-def forzar_hora(texto, horas):
-    """Busca cualquier bloque de 14 números y le resta las horas."""
-    def reemplazar(match):
-        fecha_original = match.group(1)
-        try:
-            # Convertimos a fecha, restamos y devolvemos texto
-            dt = datetime.strptime(fecha_original, "%Y%m%d%H%M%S")
-            dt_nueva = dt + timedelta(hours=horas)
-            return dt_nueva.strftime("%Y%m%d%H%M%S")
-        except:
-            return fecha_original
-    
-    # Busca 14 dígitos seguidos (el formato de fecha de XMLTV)
-    return re.sub(r'(\d{14})', reemplazar, texto)
-
-def main():
-    print("Iniciando descarga...")
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiApp-Espana-Fija">']
+def procesar_datos(raw_content):
+    """Función aislada para editar el XML sin romper la descarga."""
+    desfase = -2
+    traducciones = {
+        "Discovery": "Discovery Channel",
+        "Disney": "Disney Channel",
+        "HBO": "HBO",
+        "MTV": "MTV España",
+        "CNN": "CNN International",
+        "Eurosport": "Eurosport",
+        "National Geographic": "Nat Geo",
+        "Nickelodeon": "Nickelodeon",
+        "History": "Historia",
+        "FOX": "FOX España",
+        "AXN": "AXN España"
+    }
     
     try:
-        r = requests.get(URL_OPEN, timeout=60)
-        if r.status_code == 200:
-            content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
-            
-            canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
-            programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
-            
-            ids_activos = set()
-
-            # 1. Procesar Canales
-            for c in canales:
-                m = re.search(r'id="(.*?)"', c)
-                if m:
-                    cid = m.group(1)
-                    for clave, nombre in TRADUCCIONES.items():
-                        if clave.lower() in cid.lower():
-                            c = re.sub(r'<display-name.*?>.*?</display-name>', f'<display-name>{nombre}</display-name>', c)
-                            final_xml.append(c)
-                            ids_activos.add(cid)
-                            break
-
-            # 2. Procesar Programas con Cirugía Horaria
-            for p in programas:
-                m_chan = re.search(r'channel="(.*?)"', p)
-                if m_chan and m_chan.group(1) in ids_activos:
-                    # Aplicamos el cambio de hora directamente al texto del programa
-                    p_corregido = forzar_hora(p, DESFASE)
-                    # Forzamos que la App vea el offset de España (+0100)
-                    p_corregido = re.sub(r'\+\d{4}', '+0100', p_corregido)
-                    final_xml.append(p_corregido)
-
-            print(f"Procesados {len(ids_activos)} canales con hora ajustada.")
+        final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiApp-Espana">']
+        ids_validos = set()
         
-    except Exception as e:
-        print(f"Error: {e}")
+        # 1. Canales
+        canales = re.findall(r'<channel.*?</channel>', raw_content, re.DOTALL)
+        for c in canales:
+            m = re.search(r'id="(.*?)"', c)
+            if m:
+                cid = m.group(1)
+                for clave, nombre in traducciones.items():
+                    if clave.lower() in cid.lower():
+                        c = re.sub(r'<display-name.*?>.*?</display-name>', f'<display-name>{nombre}</display-name>', c)
+                        final_xml.append(c)
+                        ids_validos.add(cid)
+                        break
 
-    final_xml.append('</tv>')
+        # 2. Programas
+        programas = re.findall(r'<programme.*?</programme>', raw_content, re.DOTALL)
+        for p in programas:
+            m_chan = re.search(r'channel="(.*?)"', p)
+            if m_chan and m_chan.group(1) in ids_validos:
+                # Cambio de hora
+                tiempos = re.findall(r'(\d{14})', p)
+                for t in tiempos:
+                    dt = datetime.strptime(t, "%Y%m%d%H%M%S") + timedelta(hours=desfase)
+                    p = p.replace(t, dt.strftime("%Y%m%d%H%M%S"))
+                p = re.sub(r'\+\d{4}', '+0100', p)
+                final_xml.append(p)
+
+        final_xml.append('</tv>')
+        return "\n".join(final_xml)
+    except Exception as e:
+        print(f"Error en procesamiento: {e}")
+        return raw_content # Si falla, devuelve el original para no dar 0
+
+def main():
+    url = "http://www.teleguide.info/download/new3/xmltv.xml.gz"
+    print("Iniciando descarga...")
     
-    # Guardar
-    with open("guia_completa.xml", "w", encoding="utf-8") as f:
-        f.write("\n".join(final_xml))
-    with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
-        f.write("\n".join(final_xml))
+    try:
+        r = requests.get(url, timeout=60)
+        if r.status_code == 200:
+            # Descomprimir
+            raw = gzip.decompress(r.content).decode('utf-8', errors='ignore')
+            print("Descarga completa. Editando...")
+            
+            # Procesar
+            resultado = procesar_datos(raw)
+            
+            # Guardar ambos formatos
+            with open("guia_completa.xml", "w", encoding="utf-8") as f:
+                f.write(resultado)
+            with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
+                f.write(resultado)
+            print("Archivos guardados correctamente.")
+        else:
+            print(f"Error servidor: {r.status_code}")
+    except Exception as e:
+        print(f"Error crítico: {e}")
 
 if __name__ == "__main__":
     main()
