@@ -30,3 +30,4 @@ jobs:
           git add guia_completa.xml guia_completa.xml.gz
           git commit -m "Actualización automática de EPG" || exit 0
           git push
+
