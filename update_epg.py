@@ -2,61 +2,66 @@ import requests
 import gzip
 import re
 
-# FUENTES DE RESPALDO (Servidores que no bloquean a GitHub Actions)
+# FUENTES REGIONALES (Fuera de los bloqueos estándar)
 EPG_SOURCES = [
-    # LATAM (Fuente de GatoTV procesada por terceros)
-    "https://raw.githubusercontent.com/fshvinc/EPG/main/guia.xml",
-    # LATAM 2 (Alternativa México/Argentina/Chile)
-    "https://raw.githubusercontent.com/clover-guia/epg/master/guia.xml",
-    # EUROPA (Italia, Francia, etc.)
-    "https://raw.githubusercontent.com/bitsr0/xmltv/master/guide.xml"
+    # LATAM MIX (México, Argentina, Colombia, etc.)
+    "https://iptv-org.github.io/epg/guides/mx/mi.tv.xml",
+    "https://iptv-org.github.io/epg/guides/ar/mi.tv.xml",
+    # EUROPA MIX (Italia, Francia, Alemania)
+    "https://iptv-org.github.io/epg/guides/it/sky.it.xml",
+    "https://iptv-org.github.io/epg/guides/fr/programme-tv.net.xml"
 ]
 
 def main():
-    print("Iniciando descarga de fuentes de respaldo...")
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiGuia-Latam-Europa">']
+    print("Iniciando descarga de fuentes regionales...")
+    # Encabezado XMLTV
+    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-Regional">']
     
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
     for url in EPG_SOURCES:
         try:
             print(f"Descargando: {url}")
-            r = requests.get(url, headers=headers, timeout=60)
+            # Usamos un timeout largo por si el servidor está saturado
+            r = requests.get(url, headers=headers, timeout=45)
             
             if r.status_code == 200:
-                # Detección de GZIP
-                if r.content[:2] == b'\x1f\x8b':
-                    content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
-                else:
-                    content = r.text
-
-                # Buscamos los bloques de canales y programas
-                canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
-                programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
+                content = r.text
                 
-                if canales:
-                    final_xml.extend(canales)
-                    final_xml.extend(programas)
-                    print(f"  --> OK: {len(canales)} canales añadidos.")
-                else:
-                    print("  --> No se encontraron canales en este archivo.")
+                # Extraemos canales y programas usando una técnica de recorte limpia
+                # Buscamos todo lo que esté entre el primer <channel y el último </programme>
+                try:
+                    start_idx = content.find('<channel')
+                    end_idx = content.rfind('</programme>') + 12
+                    
+                    if start_idx != -1 and end_idx != -1:
+                        data = content[start_idx:end_idx]
+                        final_xml.append(data)
+                        print(f"  --> ÉXITO: Datos de {url.split('/')[-2].upper()} añadidos.")
+                    else:
+                        print("  --> No se encontró estructura XMLTV válida.")
+                except:
+                    print("  --> Error procesando el texto.")
             else:
-                print(f"  --> Error HTTP: {r.status_code}")
+                print(f"  --> Error HTTP {r.status_code}")
+                
         except Exception as e:
-            print(f"  --> Fallo en {url}: {e}")
+            print(f"  --> Error de conexión: {e}")
 
     final_xml.append('</tv>')
     full_text = "\n".join(final_xml)
 
+    # Guardar archivos
     with open("guia_completa.xml", "w", encoding="utf-8") as f:
         f.write(full_text)
     with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
         f.write(full_text)
     
-    print(f"\nProceso terminado. Caracteres totales: {len(full_text)}")
+    print(f"\nProceso terminado. Archivo listo para tu aplicación.")
 
 if __name__ == "__main__":
     main()
+
 
 
 
