@@ -1,19 +1,33 @@
-  - name: Ejecutar Descarga
-        run: python descargar.py
+ name: Actualizar EPG
 
-      - name: Ejecutar Procesamiento
-        run: python procesar.py
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
 
-      - name: Subir cambios a GitHub
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar
+        run: pip install requests
+
+      - name: Script
+        run: python update_epg.py
+
+      - name: Push
         run: |
-          git config --global user.name "EPG Bot"
-          git config --global user.email "bot@github.com"
-          git add guia_completa.xml
-          git commit -m "Actualización EPG" || exit 0
-          git push
-
-          git config --global user.email "bot@github.com"
-          git add guia_completa.xml guia_completa.xml.gz
-          git commit -m "Actualización automática de EPG" || exit 0
+          git config --global user.name "bot"
+          git config --global user.email "bot@bot.com"
+          git add .
+          git commit -m "update" || exit 0
           git push
 
