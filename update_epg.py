@@ -2,73 +2,71 @@ import requests
 import gzip
 import re
 
-# FUENTES DE OPEN EPG Y RESPALDO (Servidores de alta disponibilidad)
-EPG_SOURCES = [
-    # LATAM (México, Argentina, Colombia - Open EPG Mirror)
-    "https://openepg.org/xmltv/latin.xml.gz",
-    # ESPAÑA / EUROPA (Open EPG Mirror)
-    "https://openepg.org/xmltv/spain.xml.gz",
-    "https://openepg.org/xmltv/italy.xml.gz",
-    # Fuente de respaldo de GatoTV (Servidor externo)
-    "http://www.xmltv.co/xmltv/guides/mexico.xml.gz"
+# LA ÚNICA PUERTA ABIERTA (La fuente rusa que sí te descargó archivos grandes)
+URL_OPEN = "http://www.teleguide.info/download/new3/xmltv.xml.gz"
+
+# Filtros de búsqueda para rescatar canales de España e Hispanoamérica
+# Buscamos IDs o nombres que contengan estas siglas internacionales
+FILTROS = [
+    ".es", ".mx", ".ar", ".co", ".cl", ".it", ".fr", # Países
+    "Discovery", "Disney", "HBO", "FOX", "CNN", "MTV", # Marcas
+    "History", "National", "Eurosport", "Nick", "Warner", "Sony"
 ]
 
 def main():
-    print("Iniciando descarga desde Open EPG...")
-    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiAppIPTV-OpenEPG">']
+    print(f"Iniciando descarga de la fuente permitida: {URL_OPEN}")
+    final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="MiGuia-Filtro-Mundial">']
     
-    # Cabeceras para que parezca una descarga de navegador real
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
-    for url in EPG_SOURCES:
-        try:
-            print(f"Conectando a: {url}")
-            # Quitamos la verificación de SSL por si los certificados de Open EPG fallan
-            r = requests.get(url, headers=headers, timeout=60, verify=False)
+    try:
+        r = requests.get(URL_OPEN, headers=headers, timeout=60)
+        if r.status_code == 200:
+            print(f"¡CONEXIÓN EXITOSA! Tamaño: {len(r.content)} bytes.")
+            content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
             
-            if r.status_code == 200:
-                print(f"  --> Descargado ({len(r.content)} bytes). Procesando...")
-                
-                # Descomprimir (Open EPG siempre manda .gz)
-                try:
-                    content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
-                except:
-                    content = r.text
+            # Extraemos TODOS los canales y programas
+            canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
+            programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
+            
+            ids_interes = set()
+            count_canales = 0
 
-                # Extraer canales y programas
-                canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
-                programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
-                
-                if canales:
-                    final_xml.extend(canales)
-                    final_xml.extend(programas)
-                    print(f"  --> OK: {len(canales)} canales añadidos.")
-                else:
-                    # Si el regex falla, intentamos capturar todo lo que esté dentro de <tv>
-                    tv_content = re.search(r'<tv.*?>(.*?)</tv>', content, re.DOTALL | re.IGNORECASE)
-                    if tv_content:
-                        final_xml.append(tv_content.group(1))
-                        print("  --> OK: Contenido masivo añadido.")
-                    else:
-                        print("  --> Error: El archivo bajó pero no tiene formato XMLTV.")
-            else:
-                print(f"  --> Error HTTP: {r.status_code}")
-        except Exception as e:
-            print(f"  --> Fallo en la conexión: {e}")
+            # 1. Filtramos CANALES de interés (Latam, España, Europa)
+            for c in canales:
+                # Si el canal tiene alguna de nuestras marcas o países, lo guardamos
+                if any(f.lower() in c.lower() for f in FILTROS):
+                    final_xml.append(c)
+                    count_canales += 1
+                    # Guardamos el ID para traer su programación luego
+                    match = re.search(r'id="(.*?)"', c)
+                    if match:
+                        ids_interes.add(match.group(1))
+
+            # 2. Filtramos PROGRAMAS que pertenezcan a esos canales
+            count_progs = 0
+            for p in programas:
+                match = re.search(r'channel="(.*?)"', p)
+                if match and match.group(1) in ids_interes:
+                    final_xml.append(p)
+                    count_progs += 1
+
+            print(f"  --> Filtrado terminado: {count_canales} canales y {count_progs} programas rescatados.")
+        else:
+            print(f"Error HTTP: {r.status_code}")
+            
+    except Exception as e:
+        print(f"Fallo en el proceso: {e}")
 
     final_xml.append('</tv>')
-    full_text = "\n".join(final_xml)
+    resultado = "\n".join(final_xml)
 
-    # Guardar archivos
     with open("guia_completa.xml", "w", encoding="utf-8") as f:
-        f.write(full_text)
+        f.write(resultado)
     with gzip.open("guia_completa.xml.gz", "wt", encoding="utf-8") as f:
-        f.write(full_text)
+        f.write(resultado)
     
-    print(f"\nProceso terminado. Caracteres totales guardados: {len(full_text)}")
+    print(f"Archivo final guardado. Caracteres: {len(resultado)}")
 
 if __name__ == "__main__":
     main()
