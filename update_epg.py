@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 URL_OPEN = "http://www.teleguide.info/download/new3/xmltv.xml.gz"
 DESFASE = -2
 
-# Diccionario de mapeo EXACTO para evitar traducciones locas
-# Formato: "ID_Ruso": "Nombre_Espanol"
+# Diccionario de traducción (IDs comunes)
 TRADUCCIONES = {
     "discovery": "Discovery Channel",
     "disney": "Disney Channel",
@@ -16,17 +15,9 @@ TRADUCCIONES = {
     "mtv": "MTV España",
     "cnn": "CNN International",
     "eurosport": "Eurosport",
-    "nat_geo": "National Geographic",
-    "nickelodeon": "Nickelodeon",
     "fox": "FOX",
-    "axn": "AXN",
-    "history": "Historia"
+    "axn": "AXN"
 }
-
-def limpiar_xml(texto):
-    # Elimina el atributo lang="XX" de cualquier etiqueta
-    texto = re.sub(r'\slang=".*?"', '', texto)
-    return texto
 
 def ajustar_hora(match):
     t = match.group(1)
@@ -37,57 +28,61 @@ def ajustar_hora(match):
         return t
 
 def main():
-    print("Iniciando proceso...")
+    print("Iniciando descarga...")
     try:
-        r = requests.get(URL_OPEN, timeout=30)
-        if r.status_code != 200: return
+        r = requests.get(URL_OPEN, timeout=45)
+        if r.status_code != 200:
+            print(f"Error de red: {r.status_code}")
+            return
         
+        # Descomprimir y limpiar 'lang' y atributos molestos
         content = gzip.decompress(r.content).decode('utf-8', errors='ignore')
-        content = limpiar_xml(content)
-
-        # Procesar Canales
+        content = re.sub(r'\slang=".*?"', '', content)
+        
+        # 1. Procesar Canales
         canales = re.findall(r'<channel.*?</channel>', content, re.DOTALL)
-        ids_interes = set()
-        canales_finales = []
-
+        final_xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv>']
+        
+        ids_vistos = set()
         for c in canales:
             match_id = re.search(r'id="(.*?)"', c)
             if match_id:
-                cid = match_id.group(1).lower()
-                encontrado = False
-                for clave, nombre_fix in TRADUCCIONES.items():
-                    if clave in cid:
-                        # Si hay traducción, creamos la etiqueta limpia sin cirílico
-                        nuevo_canal = f'<channel id="{match_id.group(1)}">\n    <display-name>{nombre_fix}</display-name>\n  </channel>'
-                        canales_finales.append(nuevo_canal)
-                        ids_interes.add(match_id.group(1))
-                        encontrado = True
+                cid = match_id.group(1)
+                cid_low = cid.lower()
+                nombre_final = None
+                
+                # Buscar traducción
+                for clave, trad in TRADUCCIONES.items():
+                    if clave in cid_low:
+                        nombre_final = trad
                         break
-        
-        # Procesar Programas
+                
+                if nombre_final:
+                    # Si hay traducción, BORRAMOS el nombre original (cirílico)
+                    c = f'<channel id="{cid}">\n    <display-name>{nombre_final}</display-name>\n  </channel>'
+                
+                final_xml.append(c)
+                ids_vistos.add(cid)
+
+        # 2. Procesar Programas
         programas = re.findall(r'<programme.*?</programme>', content, re.DOTALL)
-        programas_finales = []
         for p in programas:
             m_chan = re.search(r'channel="(.*?)"', p)
-            if m_chan and m_chan.group(1) in ids_interes:
-                # Ajustar horas en los 14 dígitos
+            if m_chan and m_chan.group(1) in ids_vistos:
+                # Ajuste de hora
                 p = re.sub(r'(\d{14})', ajustar_hora, p)
-                # Forzar zona horaria España
+                # Forzar formato horario para España
                 p = re.sub(r'\+\d{4}', '+0100', p)
-                programas_finales.append(p)
+                final_xml.append(p)
 
-        # Construir XML final
-        resultado = '<?xml version="1.0" encoding="UTF-8"?>\n<tv>'
-        resultado += "\n".join(canales_finales)
-        resultado += "\n".join(programas_finales)
-        resultado += "\n</tv>"
-
+        final_xml.append('</tv>')
+        
         with open("guia_completa.xml", "w", encoding="utf-8") as f:
-            f.write(resultado)
-        print(f"Hecho: {len(ids_interes)} canales filtrados.")
+            f.write("\n".join(final_xml))
+        print(f"Éxito: {len(ids_vistos)} canales generados.")
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error crítico: {e}")
 
 if __name__ == "__main__":
     main()
