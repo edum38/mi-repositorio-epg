@@ -1,15 +1,15 @@
-name: ActualizarEPG
+name: Actualizar EPG
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 */12 * * *' # Ejecución cada 12 horas
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del repositorio
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configurar Python
@@ -27,7 +27,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Actualizacion automatica" || echo "Sin cambios"
+          git add guia_completa.xml
+          git commit -m "EPG Automática $(date)" || echo "Sin cambios"
           git push
 
